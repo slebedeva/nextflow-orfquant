@@ -20,7 +20,7 @@ workflow {
     fasta = file(params.fasta)
     // make it possible to provide existing annotation
     if (params.rannot) {
-        rannot_ch = channel.fromPath( "${params.rannot}")
+        rannot_ch = channel.fromPath( "${params.rannot}").first() //convert to value to avoid consuming channel
     } else {
         twobit_ch = UCSC_FATOTWOBIT(fasta)
         rannot_ch = ORFQUANT_ANNOTATION(gtf, twobit_ch, fasta)
