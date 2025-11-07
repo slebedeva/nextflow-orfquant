@@ -10,7 +10,7 @@
 params.input_dir = "$baseDir/test_data"
 params.gtf = "$baseDir/test_data/test_human_chrM_22.gtf"
 params.fasta = "$baseDir/test_data/test_human_chrM_22.fa"
-params.rmd_template = "https://raw.githubusercontent.com/slebedeva/nextflow-riboseqc/refs/heads/main/riboseqc_template.Rmd"
+params.rmd_template = "ORFquant_template.Rmd"
 params.outdir = "results"
 
 
@@ -18,8 +18,13 @@ workflow {
     input_ch = channel.fromPath( "${params.input_dir}/*.bam_for_ORFquant", checkIfExists: true )
     gtf = file(params.gtf)
     fasta = file(params.fasta)
-    twobit_ch = UCSC_FATOTWOBIT(fasta)
-    rannot_ch = ORFQUANT_ANNOTATION(gtf, twobit_ch, fasta)
+    // make it possible to provide existing annotation
+    if (params.rannot) {
+        rannot_ch = channel.fromPath( "${params.rannot}")
+    } else {
+        twobit_ch = UCSC_FATOTWOBIT(fasta)
+        rannot_ch = ORFQUANT_ANNOTATION(gtf, twobit_ch, fasta)
+    } 
     ORFQUANT(input_ch, rannot_ch, fasta)
     //ORFQUANT_REPORT(ORFQUANT.out.orfquant_results.collect(), params.rmd_template)
 }
