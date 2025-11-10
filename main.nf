@@ -10,7 +10,7 @@
 params.input_dir = "$baseDir/test_data"
 params.gtf = "$baseDir/test_data/test_human_chrM_22.gtf"
 params.fasta = "$baseDir/test_data/test_human_chrM_22.fa"
-params.rmd_template = "ORFquant_template.Rmd"
+params.rmd_template = "$baseDir/ORFquant_template.Rmd" //"https://raw.githubusercontent.com/lcalviell/ORFquant/refs/heads/master/inst/rmd/ORFquant_template.Rmd"
 params.outdir = "results"
 
 
@@ -26,7 +26,8 @@ workflow {
         rannot_ch = ORFQUANT_ANNOTATION(gtf, twobit_ch, fasta)
     } 
     ORFQUANT(input_ch, rannot_ch, fasta)
-    //ORFQUANT_REPORT(ORFQUANT.out.orfquant_results.collect(), params.rmd_template)
+    ORFQUANT_PLOTS(input_ch, ORFQUANT.out.orfquant_results, rannot_ch)
+//    ORFQUANT_REPORT(ORFQUANT_PLOTS.out.plots.collect(), params.rmd_template)
 }
 
 process UCSC_FATOTWOBIT {
@@ -99,7 +100,7 @@ process ORFQUANT_ANNOTATION {
 }
 
 process ORFQUANT {
-    tag "ORFQUANT on $input.simpleName"
+    tag "ORFQUANT on $input_fororfquant.simpleName"
     publishDir params.outdir, mode: 'copy'
     label 'multi'
     errorStrategy 'ignore'
@@ -110,7 +111,7 @@ process ORFQUANT {
     : 'quay.io/biocontainers/orfquant:1.1.0--r40_1'}"
 
     input:
-    path input
+    path input_fororfquant
     path Rannot
     path fasta
 
@@ -124,11 +125,8 @@ process ORFQUANT {
 
     library("ORFquant")
 
-    genome_dir <- "/projects/crc1678/genome_assemblies/human/hg38"
-    ann_dir <- file.path(genome_dir, "orfquant-annotation")
-    gtf_file_name <- "Homo_sapiens.GRCh38.112.gtf"
     suppressWarnings(run_ORFquant(
-        for_ORFquant_file="${input}"
+        for_ORFquant_file="${input_fororfquant}"
         , annotation_file="${Rannot}"
         , interactive=FALSE
         , n_cores=4
@@ -136,3 +134,104 @@ process ORFQUANT {
     """
 }
 
+process ORFQUANT_PLOTS{
+
+    publishDir params.outdir, mode: 'copy'
+
+    // WARN: only works with given version, do not bump up!
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container
+    ? 'https://depot.galaxyproject.org/singularity/orfquant:1.1.0--r40_1'
+    : 'quay.io/biocontainers/orfquant:1.1.0--r40_1'}"
+
+
+    input:
+    path input_fororfquant
+    path orfquant_results
+    path Rannot
+
+    output:
+    path "*plots"
+    path "*plots/*_plots_RData", emit: plots
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+
+    library("ORFquant")
+    library("magrittr")
+
+    for_orfquant_input_files <- "${input_fororfquant}" #%>% stringr::str_split(" ") %>% unlist()
+    orfquant_input_files <- "${orfquant_results}" #%>% stringr::str_split(" ") %>% unlist()
+    sample_names <- orfquant_input_files %>% sub(".bam_for_ORFquant_final_ORFquant_results","",.)
+
+    # first, create plots
+    plot_ORFquant_results(
+            for_ORFquant_file=for_orfquant_input_files
+            , ORFquant_output_file = orfquant_input_files
+            , annotation_file="${Rannot}"
+            #, output_plots_path = "plots"
+            , prefix = sample_names
+            )
+
+    
+    """
+}
+
+process ORFQUANT_REPORT {
+
+    publishDir params.outdir, mode: 'copy'
+
+    // WARN: only works with given version, do not bump up!
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container
+    ? 'https://depot.galaxyproject.org/singularity/orfquant:1.1.0--r41h9ee0642_3'
+    : 'quay.io/biocontainers/orfquant:1.1.0--r41h9ee0642_3'}"
+
+    //containerOptions { "-v /usr/share/fonts:/usr/share/fonts:ro" }
+
+    input:
+
+    path Rplots
+    path rmd_template
+
+    output:
+
+    path "ORFquant_report.html"
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+
+    library("ORFquant")
+    library("magrittr")
+
+    # convert string to vector
+    # input_files Character vector with full paths to plot files (*ORFquant_plots_RData)
+    input_files_list <- "${Rplots}" %>% stringr::str_split(" ") #%>% unlist()
+    input_files_list <- lapply(input_files_list, function(path) { path.expand(path) } )
+    input_files <- unlist(input_files_list)
+
+    # sample names
+    input_sample_names <- input_files %>% basename() %>% sub("_ORFquant_plots_RData","",.)
+
+    output_file <- "ORFquant_report.html"
+
+    # finally, generate html
+    #create_ORFquant_html_report(
+    #                input_files = input_files
+    #                , input_sample_names = samples
+    #                , output_file = output_file
+    #                )
+    
+    # this function segfaults - try raw commands
+    sink(file = paste(output_file,"_ORFquant_report_output.txt",sep = ""))
+    # render RMarkdown file > html report
+    suppressWarnings(rmarkdown::render("${rmd_template}", 
+                            params = list(input_files = input_files,
+                                          input_sample_names = input_sample_names),
+                            output_file = output_file))
+    sink()
+
+
+    """
+
+}
