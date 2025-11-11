@@ -1,20 +1,28 @@
 #!/usr/bin/env nextflow
 
-/*
- * The following pipeline parameters specify the reference genomes
- * and mapped reads and can be provided as command line options
- * Input is the directory where bam files are located and pipeline will take all bam files in that directory
- * Mapped reads for test data are downloaded from Google drive as described in Riboseqc manual
- * Reference genome and gtf are chr22 and chrM of the hg38 gencode assembly.
- */
-params.input_dir = "$baseDir/test_data"
-params.gtf = "$baseDir/test_data/test_human_chrM_22.gtf"
-params.fasta = "$baseDir/test_data/test_human_chrM_22.fa"
-params.rmd_template = "https://raw.githubusercontent.com/lcalviell/ORFquant/refs/heads/master/inst/rmd/ORFquant_template.Rmd" //"$baseDir/ORFquant_template.Rmd" //
-params.outdir = "results"
-
+//AI
+def helpMessage() {
+    log.info"""
+    Usage:
+      nextflow run main.nf --input_dir <path> --gtf <file> --fasta <file>
+    
+    Required:
+      --input_dir    Input data directory
+      --gtf          GTF annotation file
+      --fasta        Genome fasta file
+    
+    Optional:
+      --rannot       Pre-built annotation (skips rannot generation)
+      --outdir       Output directory (default: ${params.outdir})
+    """.stripIndent()
+}
 
 workflow {
+    // Validate required parameters
+    if (!params.input_dir || !params.gtf || !params.fasta) {
+        helpMessage()
+        exit 1, "Error: Missing required parameters"
+    }
     input_ch = channel.fromPath( "${params.input_dir}/*.bam_for_ORFquant", checkIfExists: true )
     gtf = file(params.gtf)
     fasta = file(params.fasta)
@@ -27,7 +35,7 @@ workflow {
     } 
     ORFQUANT(input_ch, rannot_ch, fasta)
     ORFQUANT_PLOTS(input_ch, ORFQUANT.out.orfquant_results, rannot_ch)
-    ORFQUANT_REPORT(ORFQUANT_PLOTS.out.plots.collect(), params.rmd_template)
+    ORFQUANT_REPORT(ORFQUANT_PLOTS.out.plots.collect())
 }
 
 process UCSC_FATOTWOBIT {
@@ -191,7 +199,6 @@ process ORFQUANT_REPORT {
     input:
 
     path Rplots
-    path rmd_template
 
     output:
 
@@ -222,17 +229,29 @@ process ORFQUANT_REPORT {
         stop("Missing input files: ", paste(input_files[!file_check], collapse=", "))
     }
 
+    # Path to rmd template stored in container itself
+    rmd_template_source <- paste(system.file(package="ORFquant"),"/rmd/ORFquant_template.Rmd",sep="")
+
+    # AI: SINGULARITY FIX: Copy template to writable working directory
+    # This avoids permission issues when rmarkdown tries to write intermediate files
+    rmd_template_local <- file.path(getwd(), "ORFquant_template.Rmd")
+    file.copy(rmd_template_source, rmd_template_local, overwrite = TRUE)
+    # Verify template was copied
+    if(!file.exists(rmd_template_local)) {
+        stop("Failed to copy RMD template to working directory")
+    }
+
     # Finally, generate html
-    #create_ORFquant_html_report(input_files = input_files, input_sample_names = samples, output_file = output_file)
-    # This function segfaults - use raw commands
+    # The create_ORFquant_html_report function fails - use raw commands instead
     sink(file = paste(output_file,"_ORFquant_report_output.txt",sep = ""))
-    # render RMarkdown file > html report;
-    suppressWarnings(rmarkdown::render("${rmd_template}", 
+    # render RMarkdown file > html report:
+    suppressWarnings(rmarkdown::render(rmd_template_local, 
                             params = list(input_files = input_files,
                                           input_sample_names = input_sample_names),
                             output_file = basename(output_file),
                             output_dir = dirname(output_file),
-                            knit_root_dir = getwd() 
+                            knit_root_dir = getwd(),
+                            intermediates_dir = getwd()  # Explicitly set intermediate files directory for singularity to avoid permission issues
                             ))
     sink()
     """

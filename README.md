@@ -26,3 +26,5 @@ nextflow run slebedeva/nextflow-orfquant \
 --gtf $GTF \
 --fasta $FASTA 
 ```
+
+If you have already generated ORFquant annotation , you can provide it with `--rannot` argument.
