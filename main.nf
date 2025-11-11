@@ -125,6 +125,7 @@ process ORFQUANT {
 
     output:
     path "*_Detected_ORFs.gtf"
+    path "*_Protein_sequences.fasta"
     path "*_final_ORFquant_results", emit: orfquant_results
 
     script:
