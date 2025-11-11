@@ -10,7 +10,7 @@
 params.input_dir = "$baseDir/test_data"
 params.gtf = "$baseDir/test_data/test_human_chrM_22.gtf"
 params.fasta = "$baseDir/test_data/test_human_chrM_22.fa"
-params.rmd_template = "$baseDir/ORFquant_template.Rmd" //"https://raw.githubusercontent.com/lcalviell/ORFquant/refs/heads/master/inst/rmd/ORFquant_template.Rmd"
+params.rmd_template = "https://raw.githubusercontent.com/lcalviell/ORFquant/refs/heads/master/inst/rmd/ORFquant_template.Rmd" //"$baseDir/ORFquant_template.Rmd" //
 params.outdir = "results"
 
 
@@ -27,7 +27,7 @@ workflow {
     } 
     ORFQUANT(input_ch, rannot_ch, fasta)
     ORFQUANT_PLOTS(input_ch, ORFQUANT.out.orfquant_results, rannot_ch)
-//    ORFQUANT_REPORT(ORFQUANT_PLOTS.out.plots.collect(), params.rmd_template)
+    ORFQUANT_REPORT(ORFQUANT_PLOTS.out.plots.collect(), params.rmd_template)
 }
 
 process UCSC_FATOTWOBIT {
@@ -204,34 +204,37 @@ process ORFQUANT_REPORT {
     library("ORFquant")
     library("magrittr")
 
-    # convert string to vector
-    # input_files Character vector with full paths to plot files (*ORFquant_plots_RData)
-    input_files_list <- "${Rplots}" %>% stringr::str_split(" ") #%>% unlist()
-    input_files_list <- lapply(input_files_list, function(path) { path.expand(path) } )
-    input_files <- unlist(input_files_list)
+    # Convert input string to R vector (input = plot files *ORFquant_plots_RData)
+    input_files <- "${Rplots}" %>% stringr::str_split(" ") %>% unlist()
 
-    # sample names
+    # Generate sample names from file names
     input_sample_names <- input_files %>% basename() %>% sub("_ORFquant_plots_RData","",.)
 
-    output_file <- "ORFquant_report.html"
+    # AI: Get absolute paths to ensure files can be found during RMD rendering
+    input_files <- normalizePath(input_files, mustWork = TRUE)
 
-    # finally, generate html
-    #create_ORFquant_html_report(
-    #                input_files = input_files
-    #                , input_sample_names = samples
-    #                , output_file = output_file
-    #                )
-    
-    # this function segfaults - try raw commands
+    # AI: Get absolute path for output file in current directory
+    output_file <- file.path(getwd(), "ORFquant_report.html")
+
+    # AI: Check that files exist before rendering
+    file_check <- sapply(input_files, file.exists)
+    if(!all(file_check)) {
+        stop("Missing input files: ", paste(input_files[!file_check], collapse=", "))
+    }
+
+    # Finally, generate html
+    #create_ORFquant_html_report(input_files = input_files, input_sample_names = samples, output_file = output_file)
+    # This function segfaults - use raw commands
     sink(file = paste(output_file,"_ORFquant_report_output.txt",sep = ""))
-    # render RMarkdown file > html report
+    # render RMarkdown file > html report;
     suppressWarnings(rmarkdown::render("${rmd_template}", 
                             params = list(input_files = input_files,
                                           input_sample_names = input_sample_names),
-                            output_file = output_file))
+                            output_file = basename(output_file),
+                            output_dir = dirname(output_file),
+                            knit_root_dir = getwd() 
+                            ))
     sink()
-
-
     """
 
 }
